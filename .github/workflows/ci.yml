@@ -69,12 +69,6 @@ jobs:
                       fastapi uvicorn pydantic requests \
                       joblib pyarrow mlflow --quiet
 
-      - name: Generate synthetic data
-        run: python src/cloud/generate_synthetic.py --n 1000
-
-      - name: Run data pipeline
-        run: python src/cloud/data_pipeline.py
-
       - name: Verify processed files exist
         run: |
           python - <<'EOF'
@@ -96,7 +90,7 @@ jobs:
 
       - name: Run fog server syntax check
         run: python -c "import ast; ast.parse(open('src/fog/fog_server.py').read()); print('Fog OK')"
-
+        
   # ── 3. Train + evaluate ────────────────────────────────────────────────────
   train:
     name: Train & evaluate
@@ -115,18 +109,13 @@ jobs:
           pip install pandas numpy scikit-learn xgboost torch \
                       mlflow joblib pyarrow imbalanced-learn --quiet
 
-      - name: Generate data + run pipeline
-        run: |
-          python src/cloud/generate_synthetic.py --n 3000
-          python src/cloud/data_pipeline.py
-
-      - name: Train XGBoost
+      - name: Train XGBoost on committed processed data
         run: python src/cloud/train_xgboost.py
 
       - name: Gate on AUROC threshold
         run: |
           python - <<'EOF'
-          import json, sys, joblib, pandas as pd
+          import sys, joblib, pandas as pd
           from pathlib import Path
           from sklearn.metrics import roc_auc_score
 
