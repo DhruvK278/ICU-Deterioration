@@ -23,7 +23,7 @@ on:
 env:
   PYTHON_VERSION: "3.11"
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
+  IMAGE_NAME: dhruvk278/icu-deterioration   # Hardcoded lowercase
   MIN_AUROC: "0.85"      # pipeline fails if model drops below this
 
 jobs:
@@ -90,7 +90,7 @@ jobs:
 
       - name: Run fog server syntax check
         run: python -c "import ast; ast.parse(open('src/fog/fog_server.py').read()); print('Fog OK')"
-        
+
   # ── 3. Train + evaluate ────────────────────────────────────────────────────
   train:
     name: Train & evaluate
