@@ -1,0 +1,26 @@
+# docker/Dockerfile.edge
+# Edge layer — lightweight rule-based anomaly detector
+# Designed to run on constrained hardware (Raspberry Pi 4, edge gateway)
+# No ML model — pure Python, minimal dependencies
+
+FROM python:3.11-slim
+
+WORKDIR /app
+
+RUN pip install --no-cache-dir \
+    requests==2.31.0 \
+    pandas==2.1.4 \
+    numpy==1.26.2 \
+    python-dotenv==1.0.0 \
+    pyarrow==14.0.1
+
+COPY src/edge/edge_detector.py    ./src/edge/edge_detector.py
+COPY data/processed/X_test.parquet  ./data/processed/X_test.parquet
+COPY data/processed/y_test.parquet  ./data/processed/y_test.parquet
+
+ENV PYTHONUNBUFFERED=1
+ENV FOG_SERVER_HOST=fog
+ENV FOG_SERVER_PORT=8000
+
+# Default: run demo simulation pointing at the fog container
+CMD ["python", "src/edge/edge_detector.py", "--fog-url", "http://fog:8000"]

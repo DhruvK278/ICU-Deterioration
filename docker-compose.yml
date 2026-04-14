@@ -1,0 +1,75 @@
+# docker-compose.yml
+# Wires Edge + Fog + MLflow together for local development
+#
+# Usage:
+#   docker-compose up --build          # start everything
+#   docker-compose up fog              # fog server only
+#   docker-compose logs -f fog         # tail fog logs
+#   docker-compose down                # stop all
+
+
+
+services:
+
+  # ── Fog inference server ──────────────────────────────────────────────────
+  fog:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.fog
+    container_name: icu_fog
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./models:/app/models:ro
+      - ./data/processed:/app/data/processed:ro
+    environment:
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+    networks:
+      - icu_net
+
+  # ── Edge detector (runs simulation then exits) ────────────────────────────
+  edge:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.edge
+    container_name: icu_edge
+    depends_on:
+      fog:
+        condition: service_healthy
+    environment:
+      - FOG_SERVER_HOST=fog
+      - FOG_SERVER_PORT=8000
+    networks:
+      - icu_net
+
+  # ── MLflow tracking server ────────────────────────────────────────────────
+  mlflow:
+    image: python:3.11-slim
+    container_name: icu_mlflow
+    command: >
+      bash -c "pip install mlflow==2.9.2 -q &&
+               mlflow server --host 0.0.0.0 --port 5000
+               --backend-store-uri sqlite:///mlflow.db
+               --default-artifact-root /mlflow/artifacts"
+    ports:
+      - "5000:5000"
+    volumes:
+      - mlflow_data:/mlflow
+    networks:
+      - icu_net
+    restart: unless-stopped
+
+networks:
+  icu_net:
+    driver: bridge
+
+volumes:
+  mlflow_data:

@@ -1,0 +1,44 @@
+# docker/Dockerfile.fog
+# Fog layer — FastAPI inference server
+# Runs on the ward-level gateway (local hospital server or EC2)
+
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install system deps
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python deps first (cached layer)
+COPY requirements.txt .
+RUN pip install --no-cache-dir \
+    fastapi==0.108.0 \
+    uvicorn==0.25.0 \
+    pydantic==2.5.3 \
+    xgboost==2.0.3 \
+    torch==2.1.2 --extra-index-url https://download.pytorch.org/whl/cpu \
+    scikit-learn==1.3.2 \
+    pandas==2.1.4 \
+    numpy==1.26.2 \
+    joblib==1.3.2 \
+    python-dotenv==1.0.0
+
+# Copy source and artefacts
+COPY src/fog/fog_server.py        ./src/fog/fog_server.py
+COPY src/cloud/train_lstm.py      ./src/cloud/train_lstm.py
+COPY models/                      ./models/
+COPY data/processed/scaler.pkl    ./data/processed/scaler.pkl
+COPY data/processed/              ./data/processed/
+
+ENV PYTHONUNBUFFERED=1
+ENV FOG_SERVER_HOST=0.0.0.0
+ENV FOG_SERVER_PORT=8000
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"
+
+CMD ["uvicorn", "src.fog.fog_server:app", "--host", "0.0.0.0", "--port", "8000"]

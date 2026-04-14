@@ -1,0 +1,220 @@
+# .github/workflows/ci.yml
+# CI/CD pipeline for ICU Deterioration Prediction
+#
+# Triggers:
+#   - Every push to main or dev branches
+#   - Every pull request to main
+#
+# Jobs:
+#   1. lint        — code style check
+#   2. test        — data pipeline + integration tests
+#   3. train       — retrain models, evaluate, fail if AUROC drops
+#   4. docker      — build and push Docker images to GHCR
+#   5. deploy      — SSH deploy fog server to EC2 (main branch only)
+
+name: ICU Deterioration CI/CD
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main]
+
+env:
+  PYTHON_VERSION: "3.11"
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+  MIN_AUROC: "0.85"      # pipeline fails if model drops below this
+
+jobs:
+
+  # ── 1. Lint ────────────────────────────────────────────────────────────────
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install linting tools
+        run: pip install flake8 black --quiet
+
+      - name: Check formatting (black)
+        run: black --check src/ --line-length 100
+        continue-on-error: true   # warn but don't block
+
+      - name: Lint (flake8)
+        run: flake8 src/ --max-line-length=100 --ignore=E203,W503,E501
+        continue-on-error: true
+
+  # ── 2. Test ────────────────────────────────────────────────────────────────
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install pandas numpy scikit-learn xgboost torch \
+                      fastapi uvicorn pydantic requests \
+                      joblib pyarrow mlflow --quiet
+
+      - name: Generate synthetic data
+        run: python src/cloud/generate_synthetic.py --n 1000
+
+      - name: Run data pipeline
+        run: python src/cloud/data_pipeline.py
+
+      - name: Verify processed files exist
+        run: |
+          python - <<'EOF'
+          from pathlib import Path
+          required = [
+            "data/processed/X_train.parquet",
+            "data/processed/X_val.parquet",
+            "data/processed/X_test.parquet",
+            "data/processed/y_train.parquet",
+            "data/processed/scaler.pkl",
+          ]
+          for f in required:
+            assert Path(f).exists(), f"Missing: {f}"
+          print("All processed files present")
+          EOF
+
+      - name: Run edge detector syntax check
+        run: python -c "import ast; ast.parse(open('src/edge/edge_detector.py').read()); print('Edge OK')"
+
+      - name: Run fog server syntax check
+        run: python -c "import ast; ast.parse(open('src/fog/fog_server.py').read()); print('Fog OK')"
+
+  # ── 3. Train + evaluate ────────────────────────────────────────────────────
+  train:
+    name: Train & evaluate
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install pandas numpy scikit-learn xgboost torch \
+                      mlflow joblib pyarrow imbalanced-learn --quiet
+
+      - name: Generate data + run pipeline
+        run: |
+          python src/cloud/generate_synthetic.py --n 3000
+          python src/cloud/data_pipeline.py
+
+      - name: Train XGBoost
+        run: python src/cloud/train_xgboost.py
+
+      - name: Gate on AUROC threshold
+        run: |
+          python - <<'EOF'
+          import json, sys, joblib, pandas as pd
+          from pathlib import Path
+          from sklearn.metrics import roc_auc_score
+
+          model   = joblib.load("models/xgb_model.pkl")
+          X_test  = pd.read_parquet("data/processed/X_test.parquet")
+          y_test  = pd.read_parquet("data/processed/y_test.parquet").squeeze()
+          auroc   = roc_auc_score(y_test, model.predict_proba(X_test)[:, 1])
+          min_req = float("${{ env.MIN_AUROC }}")
+
+          print(f"Test AUROC: {auroc:.4f}  (minimum required: {min_req})")
+          if auroc < min_req:
+              print(f"FAIL: AUROC {auroc:.4f} is below threshold {min_req}")
+              sys.exit(1)
+          print("PASS: Model meets quality gate")
+          EOF
+
+      - name: Upload model artefacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: trained-models
+          path: |
+            models/xgb_model.pkl
+            models/xgb_model.json
+            models/feature_names.json
+          retention-days: 30
+
+  # ── 4. Docker build ────────────────────────────────────────────────────────
+  docker:
+    name: Build Docker images
+    runs-on: ubuntu-latest
+    needs: train
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download model artefacts
+        uses: actions/download-artifact@v4
+        with:
+          name: trained-models
+          path: models/
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push fog image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/Dockerfile.fog
+          push: ${{ github.ref == 'refs/heads/main' }}
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/fog:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/fog:${{ github.sha }}
+
+      - name: Build edge image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/Dockerfile.edge
+          push: ${{ github.ref == 'refs/heads/main' }}
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/edge:latest
+
+  # ── 5. Deploy to EC2 (main branch only) ───────────────────────────────────
+  deploy:
+    name: Deploy to EC2
+    runs-on: ubuntu-latest
+    needs: docker
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy fog server via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host:     ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key:      ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            cd ~/icu-deterioration
+            git pull origin main
+            docker pull ghcr.io/${{ github.repository }}/fog:latest
+            docker-compose up -d fog
+            docker system prune -f
+            echo "Deployed fog:latest at $(date)"

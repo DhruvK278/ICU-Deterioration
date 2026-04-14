@@ -1,0 +1,33 @@
+# docker/Dockerfile.cloud
+# Cloud layer — model training pipeline
+# Runs on AWS EC2 / GCP / any machine with the raw data
+
+FROM python:3.11-slim
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir \
+    pandas==2.1.4 \
+    numpy==1.26.2 \
+    scikit-learn==1.3.2 \
+    xgboost==2.0.3 \
+    torch==2.1.2 --extra-index-url https://download.pytorch.org/whl/cpu \
+    mlflow==2.9.2 \
+    joblib==1.3.2 \
+    pyarrow==14.0.1 \
+    python-dotenv==1.0.0 \
+    imbalanced-learn==0.11.0
+
+COPY src/cloud/  ./src/cloud/
+COPY data/raw/   ./data/raw/
+
+ENV PYTHONUNBUFFERED=1
+ENV MLFLOW_TRACKING_URI=http://mlflow:5000
+
+# Runs the full pipeline: data → XGBoost → LSTM
+CMD ["python", "src/cloud/run_training.py"]
