@@ -1,0 +1,24 @@
+# render.yaml
+# Deploy Streamlit dashboard to Render (free tier)
+# Connect your GitHub repo to Render and it reads this file automatically
+#
+# Steps:
+#   1. Go to https://render.com → New → Web Service
+#   2. Connect your GitHub repo
+#   3. Render auto-detects this file
+#   4. Set environment variable: FOG_URL = http://YOUR_EC2_IP:8000
+
+services:
+  - type: web
+    name: icu-deterioration-dashboard
+    runtime: python
+    region: oregon
+    plan: free
+    buildCommand: pip install streamlit plotly pandas requests numpy
+    startCommand: streamlit run dashboard/app.py --server.port $PORT --server.address 0.0.0.0
+    envVars:
+      - key: FOG_URL
+        #value: http://localhost:8000   update to your EC2 IP after deploy
+        value: http://34.207.149.53:8000  # update to your EC2 IP after deploy
+      - key: PYTHON_VERSION
+        value: 3.11.0

@@ -7,7 +7,7 @@
 #   docker-compose logs -f fog         # tail fog logs
 #   docker-compose down                # stop all
 
-
+version: "3.9"
 
 services:
 
@@ -49,6 +49,23 @@ services:
       - FOG_SERVER_PORT=8000
     networks:
       - icu_net
+
+  # ── Streamlit nurse dashboard ────────────────────────────────────────────
+  dashboard:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.dashboard
+    container_name: icu_dashboard
+    ports:
+      - "8501:8501"
+    depends_on:
+      fog:
+        condition: service_healthy
+    environment:
+      - FOG_URL=http://fog:8000
+    networks:
+      - icu_net
+    restart: unless-stopped
 
   # ── MLflow tracking server ────────────────────────────────────────────────
   mlflow:
