@@ -11,7 +11,7 @@ version: "3.9"
 
 services:
 
-  # ── Fog inference server ──────────────────────────────────────────────────
+  # Fog inference server
   fog:
     build:
       context: .
@@ -35,7 +35,7 @@ services:
     networks:
       - icu_net
 
-  # ── Edge detector (runs simulation then exits) ────────────────────────────
+  # Edge detector (runs simulation then exits)
   edge:
     build:
       context: .
@@ -50,7 +50,7 @@ services:
     networks:
       - icu_net
 
-  # ── Streamlit nurse dashboard ────────────────────────────────────────────
+  # Streamlit nurse dashboard
   dashboard:
     build:
       context: .
@@ -67,7 +67,7 @@ services:
       - icu_net
     restart: unless-stopped
 
-  # ── MLflow tracking server ────────────────────────────────────────────────
+  # MLflow tracking server
   mlflow:
     image: python:3.11-slim
     container_name: icu_mlflow

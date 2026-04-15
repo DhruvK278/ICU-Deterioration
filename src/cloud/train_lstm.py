@@ -1,7 +1,6 @@
 """
 src/cloud/train_lstm.py
 
-Phase 2 — LSTM model for sequential risk scoring (fog layer).
 
 Since mimic3d.csv contains one row per admission (not time-series),
 we simulate a rolling window by constructing pseudo-sequences using
@@ -47,7 +46,7 @@ NUM_LAYERS = 2
 DROPOUT    = 0.3
 
 
-# ── Dataset ───────────────────────────────────────────────────────────────────
+# Dataset 
 class ICUSequenceDataset(Dataset):
     """
     Wraps flat admission features into (SEQ_LEN, features) windows.
@@ -77,7 +76,7 @@ class ICUSequenceDataset(Dataset):
         return x_seq, self.y[idx]                       # (seq_len, features), scalar
 
 
-# ── Model ─────────────────────────────────────────────────────────────────────
+# Model
 class ICULSTMClassifier(nn.Module):
     def __init__(self, input_dim: int, hidden_dim: int, num_layers: int, dropout: float):
         super().__init__()
@@ -102,7 +101,7 @@ class ICULSTMClassifier(nn.Module):
         return self.head(last).squeeze(1)
 
 
-# ── Training loop ─────────────────────────────────────────────────────────────
+# Training loop
 def train_epoch(model, loader, optimizer, criterion):
     model.train()
     total_loss = 0.0
@@ -132,7 +131,7 @@ def evaluate(model, loader):
     return auroc, auprc
 
 
-# ── Main ──────────────────────────────────────────────────────────────────────
+# Main
 def train():
     X_train = pd.read_parquet(PROC_DIR / "X_train.parquet")
     X_val   = pd.read_parquet(PROC_DIR / "X_val.parquet")
@@ -156,7 +155,6 @@ def train():
     optimizer = torch.optim.Adam(model.parameters(), lr=LR, weight_decay=1e-4)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=3, factor=0.5)
 
-    # Weighted BCE for class imbalance
     pos_weight = torch.tensor([(y_train == 0).sum() / (y_train == 1).sum()], dtype=torch.float32).to(DEVICE)
     criterion  = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 
@@ -206,7 +204,6 @@ def train():
                     log.info(f"Early stopping at epoch {epoch}")
                     break
 
-        # Load best and evaluate on test
         model.load_state_dict(torch.load(MODEL_DIR / "lstm_model.pt", map_location=DEVICE))
         test_auroc, test_auprc = evaluate(model, test_loader)
         log.info(f"\nTest AUROC: {test_auroc:.4f}  |  Test AUPRC: {test_auprc:.4f}")
@@ -217,7 +214,6 @@ def train():
             "test_auprc":     round(test_auprc, 4),
         })
 
-        # Save config so the fog server can reconstruct the model
         config = {
             "input_dim":  input_dim,
             "hidden_dim": HIDDEN_DIM,

@@ -1,8 +1,6 @@
 """
 src/cloud/train_xgboost.py
 
-Phase 2 — XGBoost baseline model with MLflow tracking.
-
 Run:
     python src/cloud/train_xgboost.py
 
@@ -76,7 +74,6 @@ def evaluate(model, X, y, split_name: str) -> dict:
 def train():
     X_train, X_val, X_test, y_train, y_val, y_test = load_splits()
 
-    # Handle class imbalance — weight the positive class inversely
     neg, pos = (y_train == 0).sum(), (y_train == 1).sum()
     scale_pos_weight = neg / pos
     log.info(f"Class imbalance ratio (neg/pos): {scale_pos_weight:.2f} → used as scale_pos_weight")

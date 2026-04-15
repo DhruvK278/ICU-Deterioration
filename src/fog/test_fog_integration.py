@@ -60,14 +60,14 @@ def run_tests():
     log.info(f"Fog server ready at {FOG_URL}")
     log.info("=" * 60)
 
-    # ── Test 1: Health check ──────────────────────────────────────────────
+    # Test 1: Health check
     r = requests.get(f"{FOG_URL}/health")
     health = r.json()
     assert r.status_code == 200
     assert health["xgb_loaded"] is True
     log.info(f"[PASS] Health check — XGBoost loaded: {health['xgb_loaded']}, LSTM: {health['lstm_loaded']}")
 
-    # ── Test 2: Normal patient ────────────────────────────────────────────
+    # Test 2: Normal patient
     normal_payload = {
         "hadm_id":   1001,
         "timestamp": "2026-01-01T10:00:00",
@@ -91,7 +91,7 @@ def run_tests():
     pred = r.json()
     log.info(f"[PASS] Normal patient — ensemble_risk={pred['ensemble_risk']:.3f}, alert={pred['alert_level']}")
 
-    # ── Test 3: High-risk patient ─────────────────────────────────────────
+    # Test 3: High-risk patient
     critical_payload = {
         "hadm_id":   2002,
         "timestamp": "2026-01-01T10:01:00",
@@ -116,7 +116,7 @@ def run_tests():
     log.info(f"[PASS] Critical patient — ensemble_risk={pred['ensemble_risk']:.3f}, alert={pred['alert_level']}")
     assert pred["ensemble_risk"] > 0.4, "High-risk patient should score > 0.4"
 
-    # ── Test 4: Multiple readings → rolling window ────────────────────────
+    # Test 4: Multiple readings
     for i in range(5):
         critical_payload["timestamp"] = f"2026-01-01T10:0{i+2}:00"
         r = requests.post(f"{FOG_URL}/predict", json=critical_payload)
@@ -125,14 +125,14 @@ def run_tests():
     assert pred["window_size"] > 1
     log.info(f"[PASS] Rolling window — window_size={pred['window_size']}")
 
-    # ── Test 5: Patient list ──────────────────────────────────────────────
+    # Test 5: Patient list
     r = requests.get(f"{FOG_URL}/patients")
     assert r.status_code == 200
     patients = r.json()
     assert 2002 in patients or "2002" in [str(k) for k in patients.keys()]
     log.info(f"[PASS] Patient list — {len(patients)} active patients")
 
-    # ── Test 6: Discharge ─────────────────────────────────────────────────
+    # Test 6: Discharge
     r = requests.delete(f"{FOG_URL}/patients/2002")
     assert r.status_code == 200
     log.info("[PASS] Patient discharge")

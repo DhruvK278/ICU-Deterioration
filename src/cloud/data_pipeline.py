@@ -66,7 +66,6 @@ def load_raw(path: Path = None) -> pd.DataFrame:
 
     log.info(f"Loading raw data from {path}")
     df = pd.read_csv(path, low_memory=False)
-    # Normalise all column names to lowercase
     df.columns = df.columns.str.lower().str.strip()
     log.info(f"Raw shape: {df.shape}  |  columns: {df.columns.tolist()}")
     return df
@@ -115,7 +114,6 @@ def clean(df: pd.DataFrame) -> pd.DataFrame:
 def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
 
-    # Acuity score: weighted sum of interaction counts
     if "numlabs" in df.columns and "numchartevents" in df.columns:
         df["acuity_score"] = (
             df.get("numlabs", 0).fillna(0) * 1.5 +
@@ -126,31 +124,24 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
             df.get("numrx", 0).fillna(0) * 1.0
         )
 
-    # Care intensity ratio: inputs vs outputs (fluid balance proxy)
     if "numinput" in df.columns and "numoutput" in df.columns:
         total_io = df["numinput"].fillna(0) + df["numoutput"].fillna(0)
         df["io_ratio"] = df["numinput"].fillna(0) / total_io.replace(0, np.nan)
-
-    # Microbiology rate: infection investigation intensity
     if "numicrolabs" in df.columns and "numlabs" in df.columns:
         df["micro_rate"] = df["numicrolabs"].fillna(0) / df["numlabs"].replace(0, np.nan)
 
-    # Transfer burden: number of unit transfers (instability proxy)
     if "numtransfers" in df.columns:
         df["high_transfer"] = (df["numtransfers"] > 2).astype(int)
 
-    # LOS flags
     if "losdays" in df.columns:
         df["los_gt7"]  = (df["losdays"] > 7).astype(int)
         df["los_gt14"] = (df["losdays"] > 14).astype(int)
         df["los_gt30"] = (df["losdays"] > 30).astype(int)
 
-    # Age risk bands
     if "age" in df.columns:
         df["age_gt65"] = (df["age"] > 65).astype(int)
         df["age_gt80"] = (df["age"] > 80).astype(int)
 
-    # Free-text diagnosis flags (keyword matching)
     for col in ["admitdiagnosis", "admitprocedure"]:
         if col not in df.columns:
             continue
@@ -160,7 +151,6 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
         df["dx_respiratory"] = df.get("dx_respiratory", pd.Series(0, index=df.index)) | text.str.contains("|".join(RESPIRATORY_KW), regex=True).astype(int)
         df["dx_trauma"]      = df.get("dx_trauma",      pd.Series(0, index=df.index)) | text.str.contains("|".join(TRAUMA_KW),      regex=True).astype(int)
 
-    # Callout complexity: pending callouts suggest discharge difficulty
     if "numcallouts" in df.columns:
         df["has_callouts"] = (df["numcallouts"] > 0).astype(int)
 
@@ -175,7 +165,6 @@ def encode_categoricals(df: pd.DataFrame) -> pd.DataFrame:
     if "gender" in df.columns:
         df["gender"] = (df["gender"].str.upper() == "M").astype(int)
 
-    # One-hot encode low-cardinality categoricals
     cols_present = [c for c in CATEGORICAL_COLS if c in df.columns]
     if cols_present:
         df = pd.get_dummies(df, columns=cols_present, drop_first=True, dtype=int)
@@ -193,14 +182,12 @@ ENGINEERED_COLS = [
 ]
 
 def select_and_impute(df: pd.DataFrame):
-    # Base numeric cols that exist in the dataset
     base_cols = (
         [c for c in COUNT_COLS       if c in df.columns] +
         [c for c in DEMOGRAPHIC_COLS if c in df.columns] +
         ["losdays"] if "losdays" in df.columns else [] +
         [c for c in ENGINEERED_COLS  if c in df.columns]
     )
-    # Add any one-hot encoded columns
     ohe_cols = [c for c in df.columns if any(
         c.startswith(cat + "_") for cat in CATEGORICAL_COLS
     )]
@@ -209,14 +196,12 @@ def select_and_impute(df: pd.DataFrame):
     X = df[all_feature_cols].copy()
     y = df[TARGET_COL].copy()
 
-    # Drop columns that are >50% missing
     missing_pct = X.isnull().mean() * 100
     high_missing = missing_pct[missing_pct > 50].index.tolist()
     if high_missing:
         log.warning(f"Dropping columns with >50% missing: {high_missing}")
         X = X.drop(columns=high_missing)
 
-    # Median imputation for remaining nulls
     X = X.fillna(X.median(numeric_only=True))
 
     log.info(f"Feature matrix: {X.shape}  |  target distribution: {y.value_counts().to_dict()}")

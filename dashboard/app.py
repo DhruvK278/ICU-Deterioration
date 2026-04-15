@@ -1,7 +1,6 @@
 """
 dashboard/app.py
 
-Phase 5 — Nurse Alert Dashboard
 Real-time ICU risk monitoring UI built with Streamlit.
 
 Shows:
@@ -13,8 +12,6 @@ Shows:
 Run locally:
     streamlit run dashboard/app.py
 
-Run against live fog server:
-    FOG_URL=http://YOUR_EC2_IP:8000 streamlit run dashboard/app.py
 """
 
 import os
@@ -27,10 +24,10 @@ import plotly.graph_objects as go
 import requests
 import streamlit as st
 
-# ── Config ────────────────────────────────────────────────────────────────────
+# Config
 FOG_URL       = os.getenv("FOG_URL", "http://localhost:8000")
 REFRESH_SECS  = 10
-MAX_HISTORY   = 20   # max patients shown in ward view
+MAX_HISTORY   = 20 
 
 # Risk level colours
 LEVEL_COLORS = {
@@ -53,7 +50,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# ── Custom CSS ────────────────────────────────────────────────────────────────
+# Custom CSS
 st.markdown("""
 <style>
 .risk-card {
@@ -83,7 +80,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-# ── API helpers ───────────────────────────────────────────────────────────────
+# API helpers
 @st.cache_data(ttl=REFRESH_SECS)
 def fetch_patients() -> dict:
     try:
@@ -167,7 +164,7 @@ def send_test_patient(hadm_id: int, risk_level: str):
         return None
 
 
-# ── Sidebar ───────────────────────────────────────────────────────────────────
+# Sidebar
 with st.sidebar:
     st.markdown("### ICU Monitor")
     st.markdown(f"**Fog server:** `{FOG_URL}`")
@@ -202,7 +199,7 @@ with st.sidebar:
         st.markdown(f"Refreshing every {REFRESH_SECS}s")
 
 
-# ── Main content ──────────────────────────────────────────────────────────────
+# Main content
 st.markdown("## ICU deterioration monitor")
 st.markdown(f"*Last updated: {datetime.now().strftime('%H:%M:%S')}*")
 
@@ -212,7 +209,6 @@ if not patients:
     st.info("No active patients. Use the sidebar to add demo patients, or start the edge simulator.")
     st.code("python src/edge/edge_detector.py --fog-url http://localhost:8000")
 else:
-    # ── Summary metrics ───────────────────────────────────────────────────────
     total    = len(patients)
     critical = sum(1 for p in patients.values() if p["alert_level"] == "CRITICAL")
     warning  = sum(1 for p in patients.values() if p["alert_level"] == "WARNING")
@@ -228,10 +224,8 @@ else:
 
     st.divider()
 
-    # ── Ward view ─────────────────────────────────────────────────────────────
     st.markdown("### Ward overview")
 
-    # Sort by risk descending
     sorted_patients = sorted(
         patients.items(),
         key=lambda x: x[1]["latest_risk"],
@@ -261,7 +255,7 @@ else:
 
     st.divider()
 
-    # ── Patient detail ─────────────────────────────────────────────────────────
+    # Patient detail
     st.markdown("### Patient detail")
 
     patient_ids = [str(k) for k in patients.keys()]
@@ -273,7 +267,6 @@ else:
         level  = info.get("alert_level", "NORMAL")
         risk   = float(info.get("latest_risk", 0))
 
-        # Alert banner
         color = LEVEL_COLORS.get(level, "#888")
         bg    = LEVEL_BG.get(level, "#f5f5f5")
         st.markdown(
@@ -285,7 +278,6 @@ else:
             unsafe_allow_html=True,
         )
 
-        # Risk trend chart
         history = detail.get("history", [])
         if len(history) >= 2:
             times  = [h["timestamp"][:19].replace("T", " ") for h in history]
@@ -323,7 +315,6 @@ else:
         else:
             st.info("Only 1 reading so far — trend chart appears after 2+ readings.")
 
-        # Alert history table
         if history:
             hist_df = pd.DataFrame(history)
             hist_df["timestamp"] = hist_df["timestamp"].str[:19].str.replace("T", " ")
@@ -331,7 +322,7 @@ else:
             hist_df.columns = ["Timestamp", "Risk score", "Alert level"]
             st.dataframe(hist_df.iloc[::-1], use_container_width=True, hide_index=True)
 
-# ── Auto-refresh ──────────────────────────────────────────────────────────────
+# Auto-refresh
 if auto_refresh and health.get("status") == "ok":
     time.sleep(REFRESH_SECS)
     st.cache_data.clear()

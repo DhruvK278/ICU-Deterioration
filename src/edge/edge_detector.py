@@ -1,7 +1,6 @@
 """
 src/edge/edge_detector.py
 
-Phase 3 — Edge Layer
 Lightweight rule-based anomaly detector that runs on the bedside device
 (Raspberry Pi / edge gateway). No ML model needed — pure threshold logic
 so it works offline with <5ms latency.
@@ -35,10 +34,7 @@ import requests
 logging.basicConfig(level=logging.INFO, format="%(asctime)s  [EDGE]  %(levelname)s  %(message)s")
 log = logging.getLogger(__name__)
 
-# ── Alert thresholds (configurable via env in production) ─────────────────────
 THRESHOLDS = {
-    # Proxy thresholds based on available MIMIC3D administrative features
-    # In real deployment these would be physiological vitals
     "numlabs_high":        200,    # >200 lab orders → very high acuity
     "numchartevents_high": 500,    # >500 chart events → critical monitoring
     "numtransfers_high":   5,      # >5 transfers → highly unstable
@@ -56,7 +52,7 @@ ALERT_LEVELS = {
 }
 
 
-# ── Data structures ───────────────────────────────────────────────────────────
+# Data structures
 @dataclass
 class PatientReading:
     hadm_id:        int
@@ -92,7 +88,7 @@ class EdgeAlert:
     forwarded:   bool = False     # did we reach the fog server?
 
 
-# ── Core detector logic ───────────────────────────────────────────────────────
+# Core detector logic
 class EdgeDetector:
     def __init__(self, fog_url: str = "http://localhost:8000", retry_queue_size: int = 100):
         self.fog_url     = fog_url.rstrip("/")
@@ -190,7 +186,7 @@ class EdgeDetector:
                 self.retry_queue.popleft()
                 flushed += 1
             else:
-                break  # still offline
+                break
         if flushed:
             log.info(f"Flushed {flushed} queued alerts to fog")
 
@@ -207,14 +203,13 @@ class EdgeDetector:
             f"triggers: {alert.triggers[:3]}"
         )
 
-        # Always try to forward; also attempt queue flush
         self.flush_retry_queue()
         self.forward_to_fog(alert)
 
         return alert
 
 
-# ── Demo simulation ───────────────────────────────────────────────────────────
+# Demo simulation
 def run_demo(fog_url: str):
     """Simulate a stream of patient readings from the processed dataset."""
     import pandas as pd
@@ -262,7 +257,7 @@ def run_demo(fog_url: str):
 
         alert = detector.process(reading)
         stats[alert.level] += 1
-        time.sleep(0.1)  # simulate 100ms between readings
+        time.sleep(0.1)
 
     log.info("\n" + "=" * 60)
     log.info("Edge simulation complete:")

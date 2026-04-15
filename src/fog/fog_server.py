@@ -1,7 +1,6 @@
 """
 src/fog/fog_server.py
 
-Phase 3 — Fog Layer
 FastAPI inference server that runs on the ward-level gateway.
 
 Responsibilities:
@@ -42,15 +41,15 @@ ROOT      = Path(__file__).resolve().parents[2]
 MODEL_DIR = ROOT / "models"
 PROC_DIR  = ROOT / "data" / "processed"
 
-# ── Load feature list ─────────────────────────────────────────────────────────
+# Load feature list
 with open(MODEL_DIR / "feature_names.json") as f:
     FEATURE_NAMES = json.load(f)
 
-# ── Load XGBoost model ────────────────────────────────────────────────────────
+# Load XGBoost model
 xgb_model = joblib.load(MODEL_DIR / "xgb_model.pkl")
 log.info(f"XGBoost model loaded — {len(FEATURE_NAMES)} features")
 
-# ── Load LSTM model ───────────────────────────────────────────────────────────
+# Load LSTM model
 class ICULSTMClassifier(nn.Module):
     def __init__(self, input_dim, hidden_dim, num_layers, dropout):
         super().__init__()
@@ -88,10 +87,10 @@ if (MODEL_DIR / "lstm_model.pt").exists() and (MODEL_DIR / "lstm_config.json").e
 else:
     log.warning("LSTM model not found — fog will use XGBoost only")
 
-# ── Load scaler ───────────────────────────────────────────────────────────────
+# Load scaler
 scaler = joblib.load(PROC_DIR / "scaler.pkl")
 
-# ── Per-patient rolling window (last 8 readings) ──────────────────────────────
+# Per-patient rolling window (last 8 readings)
 patient_windows: dict = defaultdict(lambda: deque(maxlen=8))
 patient_risk_history: dict = defaultdict(list)
 
@@ -99,7 +98,7 @@ RISK_THRESHOLD_ALERT    = 0.6   # escalate to nurse above this
 RISK_THRESHOLD_CRITICAL = 0.8   # critical alert above this
 
 
-# ── Pydantic schemas ──────────────────────────────────────────────────────────
+# Pydantic schemas
 class EdgeReading(BaseModel):
     hadm_id:   int
     timestamp: str
@@ -130,7 +129,7 @@ class HealthResponse(BaseModel):
     uptime_s:      float
 
 
-# ── FastAPI app ───────────────────────────────────────────────────────────────
+# FastAPI app
 app = FastAPI(
     title="ICU Deterioration — Fog Inference Server",
     description="Ward-level risk scoring for ICU patients",
@@ -147,7 +146,7 @@ app.add_middleware(
 START_TIME = time.time()
 
 
-# ── Feature extraction ────────────────────────────────────────────────────────
+# Feature extraction
 def extract_features(reading_dict: dict) -> pd.DataFrame:
     """
     Map the raw reading dict onto the exact feature vector the models expect.
@@ -198,7 +197,6 @@ def extract_features(reading_dict: dict) -> pd.DataFrame:
     if "has_callouts" in row:
         row["has_callouts"] = 1.0 if float(reading_dict.get("numcallouts", 0) or 0) > 0 else 0.0
 
-    # One-hot admit_type
     admit_type = reading_dict.get("admit_type", "").upper()
     for col in ["admit_type_EMERGENCY", "admit_type_URGENT", "admit_type_NEWBORN"]:
         if col in row:
@@ -216,13 +214,12 @@ def score_xgb(features: pd.DataFrame) -> float:
 def score_lstm(features: pd.DataFrame, window: deque) -> Optional[float]:
     if lstm_model is None:
         return None
-    # Build sequence from window (pad with current if window too short)
     seq_len = lstm_config["seq_len"]
     rows    = list(window)
     while len(rows) < seq_len:
         rows.insert(0, features.values[0])
-    seq_arr = np.stack(rows[-seq_len:], axis=0)            # (seq_len, features)
-    tensor  = torch.tensor(seq_arr, dtype=torch.float32).unsqueeze(0)  # (1, seq_len, features)
+    seq_arr = np.stack(rows[-seq_len:], axis=0)           
+    tensor  = torch.tensor(seq_arr, dtype=torch.float32).unsqueeze(0)  
     with torch.no_grad():
         logit = lstm_model(tensor)
         prob  = torch.sigmoid(logit).item()
@@ -239,7 +236,7 @@ def determine_alert(ensemble_risk: float, edge_level: str) -> str:
     return "NORMAL"
 
 
-# ── Endpoints ─────────────────────────────────────────────────────────────────
+# Endpoints
 @app.get("/health", response_model=HealthResponse)
 def health():
     return HealthResponse(
@@ -262,14 +259,11 @@ def predict(payload: EdgeReading, background_tasks: BackgroundTasks):
     except Exception as e:
         raise HTTPException(status_code=422, detail=f"Feature extraction failed: {e}")
 
-    # Score with XGBoost
     xgb_risk = score_xgb(features)
 
-    # Update rolling window and score with LSTM
     patient_windows[hadm_id].append(features.values[0])
     lstm_risk = score_lstm(features, patient_windows[hadm_id])
 
-    # Ensemble: average if both available, else XGBoost only
     if lstm_risk is not None:
         ensemble_risk = 0.55 * xgb_risk + 0.45 * lstm_risk
     else:
@@ -277,14 +271,12 @@ def predict(payload: EdgeReading, background_tasks: BackgroundTasks):
 
     alert_level = determine_alert(ensemble_risk, payload.level)
 
-    # Log high-risk patients
     if alert_level in ("CRITICAL", "WARNING"):
         log.warning(
             f"[{hadm_id}] {alert_level} — ensemble_risk={ensemble_risk:.3f} "
             f"xgb={xgb_risk:.3f} lstm={f'{lstm_risk:.3f}' if lstm_risk is not None else 'N/A'}"
         )
 
-    # Store risk history for cloud sync
     patient_risk_history[hadm_id].append({
         "timestamp":    timestamp,
         "ensemble_risk": round(ensemble_risk, 4),

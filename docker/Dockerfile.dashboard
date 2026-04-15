@@ -1,5 +1,4 @@
 # docker/Dockerfile.dashboard
-# Phase 5 — Streamlit nurse dashboard
 # Deploy to Render or run on EC2 alongside the fog server
 
 FROM python:3.11-slim
