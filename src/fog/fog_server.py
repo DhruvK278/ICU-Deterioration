@@ -265,7 +265,7 @@ def predict(payload: EdgeReading, background_tasks: BackgroundTasks):
     lstm_risk = score_lstm(features, patient_windows[hadm_id])
 
     if lstm_risk is not None:
-        ensemble_risk = 0.55 * xgb_risk + 0.45 * lstm_risk
+        ensemble_risk = 0.90 * xgb_risk + 0.10 * lstm_risk
     else:
         ensemble_risk = xgb_risk
 
