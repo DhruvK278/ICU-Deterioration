@@ -8,6 +8,6 @@ services:
     startCommand: streamlit run dashboard/app.py --server.port $PORT --server.address 0.0.0.0
     envVars:
       - key: FOG_URL
-        value: http://34.207.149.53:8000
+        sync: false  # Set this in Render dashboard — never commit server IPs
       - key: PYTHON_VERSION
         value: 3.11.0

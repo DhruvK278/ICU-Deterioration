@@ -26,8 +26,14 @@ import streamlit as st
 
 # Config
 FOG_URL       = os.getenv("FOG_URL", "http://localhost:8000")
+FOG_API_KEY   = os.getenv("FOG_API_KEY", "")
 REFRESH_SECS  = 10
-MAX_HISTORY   = 20 
+MAX_HISTORY   = 20
+
+# Auth headers for fog server
+FOG_HEADERS = {}
+if FOG_API_KEY:
+    FOG_HEADERS["X-API-Key"] = FOG_API_KEY
 
 # Risk level colours
 LEVEL_COLORS = {
@@ -84,7 +90,7 @@ st.markdown("""
 @st.cache_data(ttl=REFRESH_SECS)
 def fetch_patients() -> dict:
     try:
-        r = requests.get(f"{FOG_URL}/patients", timeout=3)
+        r = requests.get(f"{FOG_URL}/patients", headers=FOG_HEADERS, timeout=3)
         if r.status_code == 200:
             return r.json()
     except Exception:
@@ -95,7 +101,7 @@ def fetch_patients() -> dict:
 @st.cache_data(ttl=REFRESH_SECS)
 def fetch_patient_history(hadm_id: int) -> dict:
     try:
-        r = requests.get(f"{FOG_URL}/patients/{hadm_id}", timeout=3)
+        r = requests.get(f"{FOG_URL}/patients/{hadm_id}", headers=FOG_HEADERS, timeout=3)
         if r.status_code == 200:
             return r.json()
     except Exception:
@@ -106,7 +112,7 @@ def fetch_patient_history(hadm_id: int) -> dict:
 @st.cache_data(ttl=5)
 def fetch_health() -> dict:
     try:
-        r = requests.get(f"{FOG_URL}/health", timeout=2)
+        r = requests.get(f"{FOG_URL}/health", headers=FOG_HEADERS, timeout=2)
         if r.status_code == 200:
             return r.json()
     except Exception:
@@ -158,7 +164,7 @@ def send_test_patient(hadm_id: int, risk_level: str):
         "forwarded": False,
     }
     try:
-        r = requests.post(f"{FOG_URL}/predict", json=payload, timeout=3)
+        r = requests.post(f"{FOG_URL}/predict", json=payload, headers=FOG_HEADERS, timeout=3)
         return r.json() if r.status_code == 200 else None
     except Exception:
         return None

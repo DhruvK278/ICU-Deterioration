@@ -7,7 +7,7 @@ import torch
 from pathlib import Path
 from sklearn.metrics import roc_auc_score, average_precision_score
 
-ROOT = Path(r"c:\Users\Dhruv\Documents\Projects\ICU-Deterioration")
+ROOT = Path(__file__).resolve().parents[2]
 sys.path.append(str(ROOT / "src" / "cloud"))
 
 from train_lstm import ICULSTMClassifier, ICUSequenceDataset, DEVICE, BATCH_SIZE

@@ -24,6 +24,8 @@ services:
       - ./data/processed:/app/data/processed:ro
     environment:
       - MLFLOW_TRACKING_URI=http://mlflow:5000
+      - FOG_API_KEY=${FOG_API_KEY:-}
+      - CORS_ORIGINS=http://localhost:8501,http://icu_dashboard:8501
     healthcheck:
       test: ["CMD", "python", "-c",
              "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
@@ -47,6 +49,7 @@ services:
     environment:
       - FOG_SERVER_HOST=fog
       - FOG_SERVER_PORT=8000
+      - FOG_API_KEY=${FOG_API_KEY:-}
     networks:
       - icu_net
 
@@ -63,6 +66,7 @@ services:
         condition: service_healthy
     environment:
       - FOG_URL=http://fog:8000
+      - FOG_API_KEY=${FOG_API_KEY:-}
     networks:
       - icu_net
     restart: unless-stopped

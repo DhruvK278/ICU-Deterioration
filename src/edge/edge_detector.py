@@ -23,6 +23,7 @@ Usage:
 import argparse
 import json
 import logging
+import os
 import time
 from collections import deque
 from dataclasses import dataclass, asdict
@@ -95,6 +96,14 @@ class EdgeDetector:
         self.retry_queue = deque(maxlen=retry_queue_size)  # offline buffer
         self.session     = requests.Session()
         self.session.headers.update({"Content-Type": "application/json"})
+
+        # Add API key authentication if configured
+        fog_api_key = os.getenv("FOG_API_KEY")
+        if fog_api_key:
+            self.session.headers.update({"X-API-Key": fog_api_key})
+            log.info("API key authentication enabled")
+        else:
+            log.warning("FOG_API_KEY not set — requests will be unauthenticated")
 
     def analyse(self, reading: PatientReading) -> EdgeAlert:
         """Apply threshold rules and return an alert."""

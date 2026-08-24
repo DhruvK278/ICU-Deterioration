@@ -23,11 +23,16 @@ RUN pip install --no-cache-dir \
     python-dotenv==1.0.0 \
     imbalanced-learn==0.11.0
 
-COPY src/cloud/  ./src/cloud/
-COPY data/raw/   ./data/raw/
+# Create non-root user for security
+RUN useradd -m -s /bin/bash appuser
+
+COPY --chown=appuser:appuser src/cloud/  ./src/cloud/
+COPY --chown=appuser:appuser data/raw/   ./data/raw/
 
 ENV PYTHONUNBUFFERED=1
 ENV MLFLOW_TRACKING_URI=http://mlflow:5000
+
+USER appuser
 
 # Runs the full pipeline: data → XGBoost → LSTM
 CMD ["python", "src/cloud/run_training.py"]

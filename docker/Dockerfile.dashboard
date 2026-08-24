@@ -12,12 +12,17 @@ RUN pip install --no-cache-dir \
     requests==2.31.0 \
     numpy==1.26.2
 
-COPY dashboard/ ./dashboard/
+# Create non-root user for security
+RUN useradd -m -s /bin/bash appuser
+
+COPY --chown=appuser:appuser dashboard/ ./dashboard/
 
 ENV PYTHONUNBUFFERED=1
 ENV FOG_URL=http://fog:8000
 
 EXPOSE 8501
+
+USER appuser
 
 HEALTHCHECK --interval=30s --timeout=5s \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8501/_stcore/health')"

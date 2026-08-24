@@ -1,4 +1,50 @@
-venv
-mlruns
-notebooks/
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment / secrets
+.env
+.env.*
 icu-key.pem
+*.pem
+*.key
+
+# Data — MIMIC is access-controlled, never commit patient data
+data/raw/
+data/processed/
+
+# Trained model weights (large binaries, reproduce via training pipeline)
+models/*.pkl
+models/*.pt
+models/*.json
+!models/.gitkeep
+
+# MLflow
+mlruns/
+mlflow.db
+
+# Notebooks (optional, uncomment if you want to track them)
+notebooks/
+
+# Docker volumes
+mlflow_data/
