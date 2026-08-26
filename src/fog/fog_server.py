@@ -186,6 +186,11 @@ class PredictionResponse(BaseModel):
     window_size:   int
 
 
+class AlertAction(BaseModel):
+    action: str = Field(pattern="^(acknowledge|dismiss|escalate)$")
+    notes: Optional[str] = None
+
+
 class HealthResponse(BaseModel):
     status:        str
     xgb_loaded:    bool
@@ -430,6 +435,102 @@ def discharge_patient(hadm_id: int, _: None = Depends(verify_api_key)):
     patient_risk_history.pop(hadm_id, None)
     log.info(f"Patient {hadm_id} discharged — state cleared")
     return {"discharged": hadm_id}
+
+
+# --- Agent Endpoints ---
+
+@app.post("/predict/agent")
+def predict_agent(
+    payload: EdgeReading,
+    background_tasks: BackgroundTasks,
+    _: None = Depends(verify_api_key),
+):
+    """Entry point for the Multi-Agent pipeline."""
+    from src.agents.orchestrator import clinical_orchestrator
+    from src.agents.agent_state import create_initial_state
+    import uuid
+    
+    state = create_initial_state(
+        patient_id=payload.hadm_id,
+        timestamp=datetime.utcnow().isoformat(),
+        run_id=str(uuid.uuid4()),
+        edge_level=payload.level,
+        edge_triggers=payload.triggers,
+        raw_reading=payload.reading.model_dump()
+    )
+    
+    # Run graph
+    try:
+        final_state = clinical_orchestrator.invoke(state)
+        return final_state
+    except Exception as e:
+        log.error(f"Agent pipeline failed for {payload.hadm_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/alerts/pending")
+def get_pending_alerts(_: None = Depends(verify_api_key)):
+    """Dashboard polling endpoint for unacknowledged alerts."""
+    import sqlite3
+    from src.agents.audit_agent import DB_PATH
+    
+    if not DB_PATH.exists():
+        return {"alerts": []}
+        
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT * FROM alerts 
+            WHERE pending_approval = 1 
+            ORDER BY timestamp DESC
+        ''')
+        
+        rows = cursor.fetchall()
+        alerts = [dict(row) for row in rows]
+        
+        # Parse the JSON string back into dicts for the frontend
+        for alert in alerts:
+            if alert.get("full_state_json"):
+                alert["full_state"] = json.loads(alert["full_state_json"])
+                del alert["full_state_json"]
+                
+        conn.close()
+        return {"alerts": alerts}
+    except Exception as e:
+        log.error(f"Error fetching alerts: {e}")
+        return {"alerts": []}
+
+@app.post("/alerts/{alert_id}/action")
+def update_alert_action(alert_id: str, payload: AlertAction, _: None = Depends(verify_api_key)):
+    """Clinician action endpoint (Acknowledge/Dismiss/Escalate)."""
+    import sqlite3
+    from src.agents.audit_agent import DB_PATH
+    
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            UPDATE alerts 
+            SET pending_approval = 0, clinician_action = ?, clinician_notes = ?
+            WHERE run_id = ?
+        ''', (payload.action, payload.notes, alert_id))
+        
+        if cursor.rowcount == 0:
+            conn.close()
+            raise HTTPException(status_code=404, detail="Alert not found")
+            
+        conn.commit()
+        conn.close()
+        log.info(f"Alert {alert_id} marked as {payload.action}")
+        return {"status": "success", "alert_id": alert_id, "action": payload.action}
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error(f"Error updating alert: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 if __name__ == "__main__":
