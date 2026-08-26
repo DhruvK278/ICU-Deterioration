@@ -8,6 +8,7 @@ Shows:
   - Live risk score per patient (auto-refreshes every 10s)
   - Alert history and trend chart
   - Manual patient lookup
+  - Multi-Agent Human-in-the-Loop Alert Queue (NEW)
 
 Run locally:
     streamlit run dashboard/app.py
@@ -120,7 +121,27 @@ def fetch_health() -> dict:
     return {}
 
 
-def send_test_patient(hadm_id: int, risk_level: str):
+@st.cache_data(ttl=5)
+def fetch_pending_alerts() -> list:
+    try:
+        r = requests.get(f"{FOG_URL}/alerts/pending", headers=FOG_HEADERS, timeout=3)
+        if r.status_code == 200:
+            return r.json().get("alerts", [])
+    except Exception:
+        pass
+    return []
+
+
+def resolve_alert(alert_id: str, action: str):
+    """Sends action to the human-in-the-loop callback endpoint."""
+    payload = {"action": action, "notes": "Resolved via Dashboard"}
+    try:
+        requests.post(f"{FOG_URL}/alerts/{alert_id}/action", json=payload, headers=FOG_HEADERS, timeout=3)
+    except Exception as e:
+        st.error(f"Failed to update alert: {e}")
+
+
+def send_test_patient(hadm_id: int, risk_level: str, use_agent: bool = False):
     """Send a synthetic patient reading to the fog server for demo purposes."""
     profiles = {
         "high": {
@@ -159,12 +180,15 @@ def send_test_patient(hadm_id: int, risk_level: str):
         "timestamp": datetime.utcnow().isoformat(),
         "level":     "CRITICAL" if risk_level == "high" else "WARNING" if risk_level == "medium" else "NORMAL",
         "level_int": 3 if risk_level == "high" else 2 if risk_level == "medium" else 0,
-        "triggers":  ["dx_sepsis=1"] if risk_level == "high" else [],
+        "triggers":  ["dx_sepsis=1", "numlabs=260"] if risk_level == "high" else [],
         "reading":   profiles[risk_level],
         "forwarded": False,
     }
+    
+    endpoint = f"{FOG_URL}/predict/agent" if use_agent else f"{FOG_URL}/predict"
+    
     try:
-        r = requests.post(f"{FOG_URL}/predict", json=payload, headers=FOG_HEADERS, timeout=3)
+        r = requests.post(endpoint, json=payload, headers=FOG_HEADERS, timeout=3)
         return r.json() if r.status_code == 200 else None
     except Exception:
         return None
@@ -191,11 +215,17 @@ with st.sidebar:
     st.markdown("### Add demo patient")
     demo_id   = st.number_input("Patient ID", value=9001, step=1)
     demo_risk = st.selectbox("Risk profile", ["high", "medium", "low"])
+    use_agent = st.checkbox("Route through LangGraph Agent", value=True)
+    
     if st.button("Send to fog ↗"):
-        result = send_test_patient(int(demo_id), demo_risk)
+        result = send_test_patient(int(demo_id), demo_risk, use_agent)
         if result:
-            st.success(f"Scored: {result['ensemble_risk']:.3f} → {result['alert_level']}")
+            if use_agent:
+                st.success(f"Agent Processed! Routed to: {result.get('route_target', 'N/A')}")
+            else:
+                st.success(f"Scored: {result.get('ensemble_risk', 0):.3f} → {result.get('alert_level', 'N/A')}")
             st.cache_data.clear()
+            
         else:
             st.error("Failed — is fog running?")
 
@@ -206,127 +236,184 @@ with st.sidebar:
 
 
 # Main content
-st.markdown("## ICU deterioration monitor")
+st.markdown("## Intelligent Clinical Decision Support System")
 st.markdown(f"*Last updated: {datetime.now().strftime('%H:%M:%S')}*")
 
 patients = fetch_patients()
+pending_alerts = fetch_pending_alerts()
 
-if not patients:
+if not patients and not pending_alerts:
     st.info("No active patients. Use the sidebar to add demo patients, or start the edge simulator.")
     st.code("python src/edge/edge_detector.py --fog-url http://localhost:8000")
 else:
+    # Metrics
     total    = len(patients)
     critical = sum(1 for p in patients.values() if p["alert_level"] == "CRITICAL")
     warning  = sum(1 for p in patients.values() if p["alert_level"] == "WARNING")
     watch    = sum(1 for p in patients.values() if p["alert_level"] == "WATCH")
     normal   = sum(1 for p in patients.values() if p["alert_level"] == "NORMAL")
+    pending_count = len(pending_alerts)
 
-    c1, c2, c3, c4, c5 = st.columns(5)
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
     c1.metric("Total patients", total)
-    c2.metric("Critical", critical,  delta=None)
-    c3.metric("Warning",  warning,   delta=None)
-    c4.metric("Watch",    watch,      delta=None)
-    c5.metric("Normal",   normal,     delta=None)
+    c2.metric("Critical", critical)
+    c3.metric("Warning",  warning)
+    c4.metric("Watch",    watch)
+    c5.metric("Normal",   normal)
+    c6.metric("Pending Alerts", pending_count, delta_color="inverse")
 
     st.divider()
 
-    st.markdown("### Ward overview")
+    tab1, tab2 = st.tabs(["WARD OVERVIEW", f"ALERT QUEUE ({pending_count})"])
 
-    sorted_patients = sorted(
-        patients.items(),
-        key=lambda x: x[1]["latest_risk"],
-        reverse=True
-    )[:MAX_HISTORY]
-
-    # Build dataframe for table
-    rows = []
-    for hadm_id, info in sorted_patients:
-        rows.append({
-            "Patient ID":    hadm_id,
-            "Risk score":    round(float(info["latest_risk"]), 3),
-            "Alert level":   info["alert_level"],
-            "Readings":      info["num_readings"],
-            "Last updated":  info["last_updated"][:19].replace("T", " "),
-        })
-    df = pd.DataFrame(rows)
-
-    # Colour-code the alert level column
-    def highlight_level(val):
-        color = LEVEL_COLORS.get(val, "#888")
-        bg    = LEVEL_BG.get(val, "#f5f5f5")
-        return f"background-color: {bg}; color: {color}; font-weight: 500; border-radius: 4px; padding: 2px 8px;"
-
-    styled = df.style.applymap(highlight_level, subset=["Alert level"])
-    st.dataframe(styled, use_container_width=True, hide_index=True)
-
-    st.divider()
-
-    # Patient detail
-    st.markdown("### Patient detail")
-
-    patient_ids = [str(k) for k in patients.keys()]
-    selected    = st.selectbox("Select patient", patient_ids)
-
-    if selected:
-        detail = fetch_patient_history(int(selected))
-        info   = patients.get(int(selected)) or patients.get(selected, {})
-        level  = info.get("alert_level", "NORMAL")
-        risk   = float(info.get("latest_risk", 0))
-
-        color = LEVEL_COLORS.get(level, "#888")
-        bg    = LEVEL_BG.get(level, "#f5f5f5")
-        st.markdown(
-            f'<div style="background:{bg};border-left:4px solid {color};'
-            f'padding:12px 16px;border-radius:0 8px 8px 0;margin-bottom:1rem">'
-            f'<span style="color:{color};font-weight:500;font-size:16px">'
-            f'{level}</span> — Risk score: <strong>{risk:.3f}</strong>'
-            f'</div>',
-            unsafe_allow_html=True,
-        )
-
-        history = detail.get("history", [])
-        if len(history) >= 2:
-            times  = [h["timestamp"][:19].replace("T", " ") for h in history]
-            scores = [h["ensemble_risk"] for h in history]
-            levels = [h["alert_level"] for h in history]
-
-            fig = go.Figure()
-            fig.add_trace(go.Scatter(
-                x=times, y=scores,
-                mode="lines+markers",
-                line=dict(color=color, width=2),
-                marker=dict(
-                    size=8,
-                    color=[LEVEL_COLORS.get(l, "#888") for l in levels],
-                    line=dict(width=1, color="white"),
-                ),
-                name="Risk score",
-                hovertemplate="<b>%{x}</b><br>Risk: %{y:.3f}<extra></extra>",
-            ))
-            fig.add_hline(y=0.8, line_dash="dash", line_color="#E24B4A",
-                          annotation_text="Critical threshold (0.8)")
-            fig.add_hline(y=0.6, line_dash="dot",  line_color="#EF9F27",
-                          annotation_text="Warning threshold (0.6)")
-            fig.update_layout(
-                height=280,
-                margin=dict(l=0, r=0, t=20, b=0),
-                xaxis_title="Time",
-                yaxis_title="Ensemble risk",
-                yaxis=dict(range=[0, 1]),
-                showlegend=False,
-                plot_bgcolor="rgba(0,0,0,0)",
-                paper_bgcolor="rgba(0,0,0,0)",
-            )
-            st.plotly_chart(fig, use_container_width=True)
+    with tab2:
+        st.markdown("### Human-in-the-Loop Alert Queue")
+        
+        if not pending_alerts:
+            st.success("🎉 No pending alerts! All patients are stable or alerts have been acknowledged.")
         else:
-            st.info("Only 1 reading so far — trend chart appears after 2+ readings.")
+            for alert in pending_alerts:
+                state = alert.get("full_state", {})
+                risk = state.get("ensemble_risk") or 0.0
+                edge_level = state.get("edge_level", "NORMAL")
+                summary = state.get("clinical_summary", "No SHAP explanation provided.")
+                priority = state.get("alert_priority", "low").upper()
+                target = state.get("route_target", "Unknown").replace("_", " ").title()
+                patient_id = state.get("patient_id", "Unknown")
+                fast_track = state.get("fast_track", False)
+                
+                # Determine colors based on priority
+                color = LEVEL_COLORS.get("CRITICAL" if priority == "CRITICAL" else "WARNING" if priority == "HIGH" else "NORMAL")
+                bg = LEVEL_BG.get("CRITICAL" if priority == "CRITICAL" else "WARNING" if priority == "HIGH" else "NORMAL")
+                
+                with st.container():
+                    st.markdown(f"""
+                    <div style="background:{bg}; border-left:6px solid {color}; padding:16px 20px; border-radius:0 8px 8px 0; margin-bottom:12px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+                        <h4 style="margin-top:0; color:{color};">🚨 Patient {patient_id} — Priority: {priority}</h4>
+                        <p style="margin-bottom:8px; font-size:16px;"><strong>Target Clinician:</strong> {target}</p>
+                        <p style="margin-bottom:8px; font-size:16px;"><strong>Ensemble Risk Score:</strong> {risk:.3f} 
+                            {"<span style='color:red;font-weight:bold;'>(FAST-TRACKED)</span>" if fast_track else ""}
+                        </p>
+                        <p style="margin-bottom:8px; font-size:16px;"><strong>AI Explanation (SHAP):</strong> {summary}</p>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                    # Action Buttons
+                    col1, col2, col3, _ = st.columns([1,1,1,6])
+                    if col1.button("✅ Acknowledge", key=f"ack_{alert['run_id']}"):
+                        resolve_alert(alert['run_id'], "acknowledge")
+                        st.cache_data.clear()
+                        st.rerun()
+                    if col2.button("❌ Dismiss", key=f"dis_{alert['run_id']}"):
+                        resolve_alert(alert['run_id'], "dismiss")
+                        st.cache_data.clear()
+                        st.rerun()
+                    if col3.button("⚠️ Escalate", key=f"esc_{alert['run_id']}"):
+                        resolve_alert(alert['run_id'], "escalate")
+                        st.cache_data.clear()
+                        st.rerun()
+                    
+                    st.markdown("<hr style='margin:20px 0;'>", unsafe_allow_html=True)
 
-        if history:
-            hist_df = pd.DataFrame(history)
-            hist_df["timestamp"] = hist_df["timestamp"].str[:19].str.replace("T", " ")
-            hist_df["ensemble_risk"] = hist_df["ensemble_risk"].round(3)
-            hist_df.columns = ["Timestamp", "Risk score", "Alert level"]
-            st.dataframe(hist_df.iloc[::-1], use_container_width=True, hide_index=True)
+
+    with tab1:
+        st.markdown("### Ward overview")
+        
+        if patients:
+            sorted_patients = sorted(
+                patients.items(),
+                key=lambda x: x[1]["latest_risk"],
+                reverse=True
+            )[:MAX_HISTORY]
+
+            rows = []
+            for hadm_id, info in sorted_patients:
+                rows.append({
+                    "Patient ID":    hadm_id,
+                    "Risk score":    round(float(info["latest_risk"]), 3),
+                    "Alert level":   info["alert_level"],
+                    "Readings":      info["num_readings"],
+                    "Last updated":  info["last_updated"][:19].replace("T", " "),
+                })
+            df = pd.DataFrame(rows)
+
+            def highlight_level(val):
+                color = LEVEL_COLORS.get(val, "#888")
+                bg    = LEVEL_BG.get(val, "#f5f5f5")
+                return f"background-color: {bg}; color: {color}; font-weight: 500; border-radius: 4px; padding: 2px 8px;"
+
+            styled = df.style.applymap(highlight_level, subset=["Alert level"])
+            st.dataframe(styled, use_container_width=True, hide_index=True)
+
+            st.divider()
+
+            # Patient detail
+            st.markdown("### Patient detail")
+
+            patient_ids = [str(k) for k in patients.keys()]
+            selected    = st.selectbox("Select patient", patient_ids)
+
+            if selected:
+                detail = fetch_patient_history(int(selected))
+                info   = patients.get(int(selected)) or patients.get(selected, {})
+                level  = info.get("alert_level", "NORMAL")
+                risk   = float(info.get("latest_risk", 0))
+
+                color = LEVEL_COLORS.get(level, "#888")
+                bg    = LEVEL_BG.get(level, "#f5f5f5")
+                st.markdown(
+                    f'<div style="background:{bg};border-left:4px solid {color};'
+                    f'padding:12px 16px;border-radius:0 8px 8px 0;margin-bottom:1rem">'
+                    f'<span style="color:{color};font-weight:500;font-size:16px">'
+                    f'{level}</span> — Risk score: <strong>{risk:.3f}</strong>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+
+                history = detail.get("history", [])
+                if len(history) >= 2:
+                    times  = [h["timestamp"][:19].replace("T", " ") for h in history]
+                    scores = [h["ensemble_risk"] for h in history]
+                    levels = [h["alert_level"] for h in history]
+
+                    fig = go.Figure()
+                    fig.add_trace(go.Scatter(
+                        x=times, y=scores,
+                        mode="lines+markers",
+                        line=dict(color=color, width=2),
+                        marker=dict(
+                            size=8,
+                            color=[LEVEL_COLORS.get(l, "#888") for l in levels],
+                            line=dict(width=1, color="white"),
+                        ),
+                        name="Risk score",
+                        hovertemplate="<b>%{x}</b><br>Risk: %{y:.3f}<extra></extra>",
+                    ))
+                    fig.add_hline(y=0.8, line_dash="dash", line_color="#E24B4A",
+                                  annotation_text="Critical threshold (0.8)")
+                    fig.add_hline(y=0.6, line_dash="dot",  line_color="#EF9F27",
+                                  annotation_text="Warning threshold (0.6)")
+                    fig.update_layout(
+                        height=280,
+                        margin=dict(l=0, r=0, t=20, b=0),
+                        xaxis_title="Time",
+                        yaxis_title="Ensemble risk",
+                        yaxis=dict(range=[0, 1]),
+                        showlegend=False,
+                        plot_bgcolor="rgba(0,0,0,0)",
+                        paper_bgcolor="rgba(0,0,0,0)",
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.info("Only 1 reading so far — trend chart appears after 2+ readings.")
+
+                if history:
+                    hist_df = pd.DataFrame(history)
+                    hist_df["timestamp"] = hist_df["timestamp"].str[:19].str.replace("T", " ")
+                    hist_df["ensemble_risk"] = hist_df["ensemble_risk"].round(3)
+                    hist_df.columns = ["Timestamp", "Risk score", "Alert level"]
+                    st.dataframe(hist_df.iloc[::-1], use_container_width=True, hide_index=True)
+
 
 # Auto-refresh
 if auto_refresh and health.get("status") == "ok":

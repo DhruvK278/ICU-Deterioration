@@ -61,6 +61,7 @@ def router_agent(state: AgentState) -> Dict[str, Any]:
     return {
         "alert_priority": priority,
         "route_target": target,
+        "pending_approval": priority != "log_only",
         "alert_id": str(uuid.uuid4()),
         "latency_ms": {**state.get("latency_ms", {}), "router_agent": latency}
     }

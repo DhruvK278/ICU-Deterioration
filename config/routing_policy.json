@@ -2,7 +2,7 @@
   "unit_name": "General ICU",
   "policies": [
     {
-      "min_risk": 0.8,
+      "min_risk": 0.0,
       "edge_levels": ["CRITICAL"],
       "priority": "critical",
       "target": "attending_physician"
@@ -13,18 +13,18 @@
       "target": "attending_physician"
     },
     {
-      "min_risk": 0.6,
+      "min_risk": 0.0,
       "edge_levels": ["WARNING", "WATCH"],
       "priority": "high",
       "target": "charge_nurse"
     },
     {
-      "min_risk": 0.6,
+      "min_risk": 0.5,
       "priority": "medium",
       "target": "nurse"
     },
     {
-      "min_risk": 0.4,
+      "min_risk": 0.3,
       "priority": "low",
       "target": "nurse"
     },

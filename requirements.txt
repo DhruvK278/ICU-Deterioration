@@ -8,7 +8,7 @@ fastapi==0.108.0
 uvicorn==0.25.0
 streamlit==1.29.0
 plotly==5.18.0
-pydantic==2.5.3
+pydantic>=2.8.2
 python-dotenv==1.0.0
 requests==2.31.0
 tqdm==4.66.1
