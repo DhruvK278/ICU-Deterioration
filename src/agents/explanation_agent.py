@@ -19,7 +19,7 @@ from src.fog.fog_server import xgb_model, FEATURE_NAMES
 log = logging.getLogger(__name__)
 
 # Load clinical descriptions mapping
-ROOT = Path(__file__).resolve().parents[3]
+ROOT = Path(__file__).resolve().parents[2]
 try:
     with open(ROOT / "config" / "feature_descriptions.json") as f:
         FEATURE_DESCS = json.load(f)

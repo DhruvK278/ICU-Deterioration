@@ -1,28 +1,67 @@
-# QA Pytest Suite: ICU Inference Server
+# Testing & QA Suite
 
-This directory contains a genuine, end-to-end Quality Automation test suite for the FastAPI inference server (`src/fog/fog_server.py`).
+This directory contains automated end-to-end and integration tests for the ICU Deterioration Prediction system, covering both the FastAPI ward inference server (`src/fog/fog_server.py`) and the LangGraph multi-agent decision support pipeline (`src/agents/`).
 
-The tests are designed to exercise the actual `/predict` endpoint and its ML inference logic without aggressive mocking, proving that the API properly validates incoming clinical payloads, enforces logical bounds, and securely handles anomalous or missing data.
+The tests are designed to exercise genuine inference logic, validation schemas, and agent state transitions without brittle mocking.
 
-## What is tested?
+---
 
-1. **Valid Requests**: Verifies the 200 OK happy path and ensures the response JSON matches the exact structural shape and data types defined by the contract (including risk score bounded ranges).
-2. **Missing Required Fields**: Asserts that strict Pydantic models correctly identify omitted core identifiers (`hadm_id`) and return a fast, localized 422 error.
-3. **Invalid Data Types**: Validates that bad coercions (e.g., strings injected into numeric clinical fields like `acuity_score`) are securely rejected with a 422 error before reaching the ML models.
-4. **Clinical Range Enforcement**: Tests bounds constraints (`age` > 120), asserting graceful 422 failure to ensure the models aren't corrupted by impossible clinical values.
-5. **Malformed Payload Boundaries**: Proves that garbage JSON strings fail securely at the framework boundary, protecting the server.
-6. **Unvalidated Edge Cases (QA Insight)**: Specifically highlights `admit_type`, which currently lacks Enum enforcement. It proves the ML extraction gracefully falls back without crashing, while adding an explicit comment recommending tighter bounds.
+## Test Suites Overview
 
-## How to Run
+### 1. API Contract & Validation Suite (`test_inference.py`)
+Tests the FastAPI `/predict` endpoint against strict Pydantic payload definitions and model inference boundaries:
 
-1. **Install Testing Dependencies**:
-   Ensure you have installed the required dependencies in your environment:
-   ```bash
-   pip install pytest httpx
-   ```
+- **Valid Payload (`test_predict_valid_request`)**: Asserts 200 OK happy path, verifying response JSON schema, types, and that `xgb_risk` and `ensemble_risk` fall strictly within $[0.0, 1.0]$.
+- **Missing Required Fields (`test_predict_missing_required_field`)**: Verifies that omitting required identifiers (`hadm_id`) raises a 422 Unprocessable Entity error at the Pydantic schema validation boundary.
+- **Data Type Enforcement (`test_predict_wrong_data_type`)**: Tests type coercion safety by injecting string values into numeric clinical attributes (`acuity_score`), asserting rejection with 422.
+- **Clinical Range Enforcement (`test_predict_out_of_range_value`)**: Tests boundary constraints (`age` > 120 or negative values), verifying rejection with 422 to prevent model poisoning.
+- **Malformed Payload Handling (`test_predict_malformed_json`)**: Validates framework handling of invalid JSON strings.
+- **Edge Case Fallback (`test_predict_unvalidated_field_behavior`)**: Verifies graceful handling of non-standard categorical entries (e.g. `admit_type`).
 
-2. **Execute the Suite**:
-   Run the tests from the root of the project directory:
-   ```bash
-   python -m pytest tests/test_inference.py -v
-   ```
+### 2. Multi-Agent Pipeline Suite (`test_agents.py`)
+Tests the LangGraph `StateGraph` clinical decision orchestrator (`src/agents/orchestrator.py`):
+
+- **End-to-End Orchestration**: Initializes an `AgentState` for an acute patient, invoking the compiled graph.
+- **Triage & Fast-Track Routing**: Verifies condition evaluations (`should_fast_track`) and edge trigger processing.
+- **Dual-Model Risk Scoring**: Checks that the Risk Agent properly executes XGBoost and LSTM ensemble models.
+- **SHAP Explanation & Clinical Translation**: Validates TreeExplainer execution, top contributor extraction, and clinical feature description mapping via `config/feature_descriptions.json`.
+- **Policy Routing**: Evaluates alert priority and routing target assignment via `config/routing_policy.json`.
+- **Audit Persistence**: Confirms that state transitions and metadata are written to the local SQLite audit log (`data/audit_log.db`).
+
+### 3. Ward Server Integration Test (`src/fog/test_fog_integration.py`)
+A standalone end-to-end integration test that spins up the Fog server on a background thread (`uvicorn`) and executes realistic edge detector simulation requests:
+- Health check validation (`/health`)
+- Normal vs critical patient trajectory simulation
+- Rolling window expansion (`patient_windows`)
+- Active patient registry query (`/patients`)
+- Patient discharge state cleanup (`DELETE /patients/{hadm_id}`)
+
+---
+
+## How to Run Tests
+
+### Run All Pytest Suites
+From the project root:
+```bash
+pytest tests/ -v
+```
+
+### Run Individual Suites
+Run only API boundary tests:
+```bash
+pytest tests/test_inference.py -v
+```
+
+Run only the Multi-Agent pipeline test:
+```bash
+pytest tests/test_agents.py -v
+```
+Or execute directly as a script:
+```bash
+python tests/test_agents.py
+```
+
+### Run Fog Gateway Integration Test
+```bash
+python src/fog/test_fog_integration.py
+```

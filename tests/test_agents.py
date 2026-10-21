@@ -17,7 +17,7 @@ sys.path.append(str(ROOT))
 from src.agents.agent_state import create_initial_state
 from src.agents.orchestrator import clinical_orchestrator
 
-def run_test():
+def test_langgraph_pipeline():
     print("=== Testing LangGraph Pipeline ===")
     
     # Mock a reading (High Risk case)
@@ -61,4 +61,4 @@ def run_test():
     print("=== Test Complete ===")
 
 if __name__ == "__main__":
-    run_test()
+    test_langgraph_pipeline()
